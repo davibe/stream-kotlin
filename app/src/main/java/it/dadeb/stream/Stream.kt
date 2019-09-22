@@ -75,36 +75,36 @@ open class Stream<T>() : Disposable {
     }
 
     fun <U> map(function: (T) -> U): Stream<U> {
-        val event = Stream<U>()
-        if (this.valuePresent) { event.value = function(this.value as T) }
-        event.valuePresent = this.valuePresent
-        event.disposables += this.subscribe {
-            event.trigger(function(it))
+        val stream = Stream<U>()
+        if (this.valuePresent) { stream.value = function(this.value as T) }
+        stream.valuePresent = this.valuePresent
+        stream.disposables += this.subscribe {
+            stream.trigger(function(it))
         }
-        this.disposables += event
-        return event
+        this.disposables += stream
+        return stream
     }
 
     fun distinct(): Stream<T> {
-        val event = Stream<T>()
-        event.value = this.value
-        event.valuePresent = this.valuePresent
-        this.disposables += event
+        val stream = Stream<T>()
+        stream.value = this.value
+        stream.valuePresent = this.valuePresent
+        this.disposables += stream
 
         var sub: Subscription<T>? = null
         sub = this.subscribe(replay = true) { initial ->
             sub?.dispose()
             var initialValue = initial
-            event.trigger(initial)
+            stream.trigger(initial)
             this.subscribe { value ->
                 if (value != initialValue) {
-                    event.trigger(value)
+                    stream.trigger(value)
                     initialValue = value
                 }
             }
         }
 
-        return event
+        return stream
     }
 
     fun <U> fold(initialValue: U, accumulator: ((U, T) -> U)): Stream<U> {
@@ -191,9 +191,9 @@ object AllocationTracker {
             }
         }
         if (atleastone) {
-            print("leaking event handlers")
+            print("leaking stream handlers")
             if (assert) {
-                error("leaking event handlers")
+                error("leaking stream handlers")
             }
         }
     }
