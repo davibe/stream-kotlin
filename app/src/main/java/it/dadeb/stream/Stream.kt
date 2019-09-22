@@ -17,9 +17,7 @@ inline fun disposableFun(crossinline function: () -> Unit) : Disposable {
 }
 
 
-open class Stream<T>(
-    val replay: Boolean = false
-) : Disposable {
+open class Stream<T>() : Disposable {
     private var subscriptions = emptyList<Subscription<T>>()
     internal var disposables = emptyList<Disposable>()
     private var value: T? = null
@@ -28,11 +26,13 @@ open class Stream<T>(
 
     // sub apis
 
-    fun subscribe(handler: (T) -> Unit) : Subscription<T> {
+    fun subscribe(replay: Boolean = false, handler: (T) -> Unit) : Subscription<T> {
         val sub = Subscription<T>(this, this, handler)
         sub.trackSubscription()
         subscriptions = subscriptions + sub
-        replay(handler)
+        if (replay && valuePresent) {
+            handler.invoke(this.value as T)
+        }
         return sub
     }
 
@@ -41,11 +41,13 @@ open class Stream<T>(
         subscriptions = subscriptions.filter { it !== sub }
     }
 
-    fun subscribe(owner: Any, handler: (T?) -> Unit) : Subscription<T> {
+    fun subscribe(owner: Any, replay: Boolean = true, handler: (T?) -> Unit) : Subscription<T> {
         val sub = Subscription(owner, this, handler)
         sub.trackSubscription()
         subscriptions = subscriptions + sub
-        replay(handler)
+        if (replay && valuePresent) {
+            handler.invoke(this.value as T)
+        }
         return sub
     }
 
@@ -63,13 +65,6 @@ open class Stream<T>(
         cb(value as T)
     }
 
-    private fun replay(handler: (T) -> Unit) {
-        if (replay && valuePresent) {
-            // value can be "safely" casted because the T is enforced by trigger()
-            handler.invoke(value as T)
-        }
-    }
-
     // chainables
 
     fun trigger(value: T) : Stream<T> {
@@ -79,18 +74,8 @@ open class Stream<T>(
         return this
     }
 
-    fun remember() : Stream<T> {
-        if (this.replay) { return this }
-        val event = Stream<T>(replay = true)
-        event.value = this.value
-        event.valuePresent = this.valuePresent
-        event.disposables += this.subscribe { event.trigger(it) }
-        this.disposables += event
-        return event
-    }
-
     fun <U> map(function: (T) -> U): Stream<U> {
-        val event = Stream<U>(replay = true)
+        val event = Stream<U>()
         if (this.valuePresent) { event.value = function(this.value as T) }
         event.valuePresent = this.valuePresent
         event.disposables += this.subscribe {
@@ -101,18 +86,17 @@ open class Stream<T>(
     }
 
     fun distinct(): Stream<T> {
-        val event = Stream<T>(replay = true)
+        val event = Stream<T>()
         event.value = this.value
         event.valuePresent = this.valuePresent
+        this.disposables += event
 
-        val parent = this.remember()
-        parent.disposables += event
         var sub: Subscription<T>? = null
-        sub = parent.subscribe { initial ->
+        sub = this.subscribe(replay = true) { initial ->
             sub?.dispose()
             var initialValue = initial
             event.trigger(initial)
-            parent.subscribe { value ->
+            this.subscribe { value ->
                 if (value != initialValue) {
                     event.trigger(value)
                     initialValue = value

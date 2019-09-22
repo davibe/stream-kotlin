@@ -53,35 +53,6 @@ class StreamTests {
     }
 
     @Test
-    fun testRemember1() {
-        val stringChange0 = Stream<String?>()
-        val stringChange = stringChange0.remember()
-        stringChange.trigger("ciao")
-        var result: String? = null
-        stringChange.subscribe() { string -> result = string }
-        Assert.assertEquals(result, "ciao")
-        stringChange.trigger("mondo")
-        Assert.assertEquals(result, "mondo")
-        stringChange0.trigger("maledetto")
-        Assert.assertEquals(result, "maledetto")
-        stringChange.dispose()
-        AllocationTracker.report(true)
-    }
-
-    @Test
-    fun testRemember2() {
-        val stringChange0 = Stream<String?>()
-        val stringChange = stringChange0.remember()
-        stringChange0.trigger("ciao")
-        var result: String? = null
-        val sub = stringChange.subscribe() { string -> result = string }
-        Assert.assertEquals(result, "ciao")
-        stringChange0.dispose()
-        sub.dispose()
-        AllocationTracker.report(true)
-    }
-
-    @Test
     fun testNoValue() {
         val stringChange = Stream<Unit?>()
         var called = false
@@ -116,9 +87,9 @@ class StreamTests {
 
     @Test
     fun testDistinct() {
-        val ev = Stream<String>(replay = true)
+        val ev = Stream<String>()
         var result = emptyList<String>()
-        ev.distinct().subscribe { result += it }
+        ev.distinct().subscribe(replay = true) { result += it }
         ev
             .trigger("1")
             .trigger("2").trigger("2")
@@ -130,9 +101,9 @@ class StreamTests {
 
     @Test
     fun testDistinctNull() {
-        val ev = Stream<String?>(replay = true)
+        val ev = Stream<String?>()
         var result = emptyList<String?>()
-        ev.distinct().subscribe { result += it }
+        ev.distinct().subscribe(replay = true) { result += it }
         ev
             .trigger(null).trigger(null)
             .trigger("1")
@@ -175,10 +146,9 @@ class StreamTests {
         val ev1 = Stream<String?>()
         var result = Pair<String?, String?>("", null)
         val sub = ev1
-            .remember()
             .trigger(null)
             .fold(Pair<String?, String?>(null, null)) { (_, old), new ->  Pair(old, new) }
-            .subscribe { pair -> result = pair }
+            .subscribe(replay = true) { pair -> result = pair }
 
         Assert.assertEquals(Pair(null, null), result)
         ev1.trigger("1")
