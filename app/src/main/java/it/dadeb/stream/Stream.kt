@@ -41,18 +41,18 @@ open class Stream<T>(
         subscriptions = subscriptions.filter { it !== sub }
     }
 
-    fun subscribe(target: Any, handler: (T?) -> Unit) : Subscription<T> {
-        val sub = Subscription(target, this, handler)
+    fun subscribe(owner: Any, handler: (T?) -> Unit) : Subscription<T> {
+        val sub = Subscription(owner, this, handler)
         sub.trackSubscription()
         subscriptions = subscriptions + sub
         replay(handler)
         return sub
     }
 
-    fun unsubscribe(target: Any) {
+    fun unsubscribe(owner: Any) {
         subscriptions = subscriptions.filter {
-            if (it.target === target) { it.trackUnsubscription() }
-            it.target !== target
+            if (it.owner === owner) { it.trackUnsubscription() }
+            it.owner !== owner
         }
     }
 
@@ -144,7 +144,7 @@ open class Stream<T>(
 
 
 class Subscription<T>(
-    val target: Any?,
+    val owner: Any?,
     val stream: Stream<T>,
     val handler: (T) -> Unit
 ) : Disposable {
@@ -156,16 +156,19 @@ class Subscription<T>(
     }
 
     fun trackSubscription() {
-        val depth = 4
-        if (DEBUG) {
-            val fullClassName = Thread.currentThread().stackTrace[depth].className
+        if (!DEBUG) { return }
+        val stackTrack = Thread.currentThread().stackTrace
+        val value = (2 until Math.min(stackTrack.size, 10)).map {
+            val item = stackTrack[it]
+            val fullClassName = item.className
             val className = fullClassName.substring(fullClassName.lastIndexOf(".") + 1)
-            val methodName = Thread.currentThread().stackTrace[depth].methodName
-            val lineNumber = Thread.currentThread().stackTrace[depth].lineNumber
+            val methodName = item.methodName
+            val lineNumber = item.lineNumber
             val value = "$className.$methodName:$lineNumber"
-            debugSubscriber = value
-            AllocationTracker.plus(value)
-        }
+            value
+        }.joinToString(separator = "\n  ")
+        debugSubscriber = value
+        AllocationTracker.plus(value)
     }
 
     fun trackUnsubscription() {
@@ -219,14 +222,13 @@ data class Tuple5<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: 
 data class Tuple6<A, B, C, D, E, F>(val a: A, val b: B, val c: C, val d: D, val e: E, val f: F)
 
 fun <A, B>combine(a: Stream<A>, b: Stream<B>) : Stream<Tuple2<A, B>> {
-    val event = Stream<Tuple2<A, B>>()
+    val stream = Stream<Tuple2<A, B>>()
     val trigger: () -> Unit = {
         a.last { va ->
             b.last { vb ->
-                event.trigger(Tuple2(va, vb))
+                stream.trigger(Tuple2(va, vb))
             }
         }
-
     }
     a.subscribe { trigger() }
     b.subscribe { trigger() }
@@ -235,21 +237,21 @@ fun <A, B>combine(a: Stream<A>, b: Stream<B>) : Stream<Tuple2<A, B>> {
     val dispose: () -> Unit = {
         count -= 1
         if (count == 0) {
-            event.dispose()
+            stream.dispose()
         }
     }
     a.disposables += disposableFun { dispose() }
     b.disposables += disposableFun { dispose() }
-    return event
+    return stream
 }
 
 fun <A, B, C>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>) : Stream<Tuple3<A, B, C>> {
-    val event = Stream<Tuple3<A, B, C>>()
+    val stream = Stream<Tuple3<A, B, C>>()
     val trigger: () -> Unit = {
         a.last { va ->
             b.last { vb ->
                 c.last { vc ->
-                    event.trigger(Tuple3(va, vb, vc))
+                    stream.trigger(Tuple3(va, vb, vc))
                 }
             }
         }
@@ -263,11 +265,123 @@ fun <A, B, C>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>) : Stream<Tuple3<A
     val dispose: () -> Unit = {
         count -= 1
         if (count == 0) {
-            event.dispose()
+            stream.dispose()
         }
     }
     a.disposables += disposableFun { dispose() }
     b.disposables += disposableFun { dispose() }
     c.disposables += disposableFun { dispose() }
-    return event
+    return stream
+}
+
+fun <A, B, C, D>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D>) : Stream<Tuple4<A, B, C, D>> {
+    val stream = Stream<Tuple4<A, B, C, D>>()
+    val trigger: () -> Unit = {
+        a.last { va ->
+            b.last { vb ->
+                c.last { vc ->
+                    d.last { vd ->
+                        stream.trigger(Tuple4(va, vb, vc, vd))
+                    }
+                }
+            }
+        }
+
+    }
+    a.subscribe { trigger() }
+    b.subscribe { trigger() }
+    c.subscribe { trigger() }
+    d.subscribe { trigger() }
+    // destroying
+    var count = 4
+    val dispose: () -> Unit = {
+        count -= 1
+        if (count == 0) {
+            stream.dispose()
+        }
+    }
+    a.disposables += disposableFun { dispose() }
+    b.disposables += disposableFun { dispose() }
+    c.disposables += disposableFun { dispose() }
+    d.disposables += disposableFun { dispose() }
+    return stream
+}
+
+fun <A, B, C, D, E>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D>, e: Stream<E>) : Stream<Tuple5<A, B, C, D, E>> {
+    val stream = Stream<Tuple5<A, B, C, D, E>>()
+    val trigger: () -> Unit = {
+        a.last { va ->
+            b.last { vb ->
+                c.last { vc ->
+                    d.last { vd ->
+                        e.last { ve ->
+                            stream.trigger(Tuple5(va, vb, vc, vd, ve))
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+    a.subscribe { trigger() }
+    b.subscribe { trigger() }
+    c.subscribe { trigger() }
+    d.subscribe { trigger() }
+    e.subscribe { trigger() }
+    // destroying
+    var count = 5
+    val dispose: () -> Unit = {
+        count -= 1
+        if (count == 0) {
+            stream.dispose()
+        }
+    }
+    a.disposables += disposableFun { dispose() }
+    b.disposables += disposableFun { dispose() }
+    c.disposables += disposableFun { dispose() }
+    d.disposables += disposableFun { dispose() }
+    e.disposables += disposableFun { dispose() }
+    return stream
+}
+
+
+fun <A, B, C, D, E, F>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D>, e: Stream<E>, f: Stream<F>) : Stream<Tuple6<A, B, C, D, E, F>> {
+    val stream = Stream<Tuple6<A, B, C, D, E, F>>()
+    val trigger: () -> Unit = {
+        a.last { va ->
+            b.last { vb ->
+                c.last { vc ->
+                    d.last { vd ->
+                        e.last { ve ->
+                            f.last { vf ->
+                                stream.trigger(Tuple6(va, vb, vc, vd, ve, vf))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+    a.subscribe { trigger() }
+    b.subscribe { trigger() }
+    c.subscribe { trigger() }
+    d.subscribe { trigger() }
+    e.subscribe { trigger() }
+    f.subscribe { trigger() }
+    // destroying
+    var count = 6
+    val dispose: () -> Unit = {
+        count -= 1
+        if (count == 0) {
+            stream.dispose()
+        }
+    }
+    a.disposables += disposableFun { dispose() }
+    b.disposables += disposableFun { dispose() }
+    c.disposables += disposableFun { dispose() }
+    d.disposables += disposableFun { dispose() }
+    e.disposables += disposableFun { dispose() }
+    f.disposables += disposableFun { dispose() }
+    return stream
 }
