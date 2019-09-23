@@ -41,7 +41,7 @@ open class Stream<T>() : Disposable {
         subscriptions = subscriptions.filter { it !== sub }
     }
 
-    fun subscribe(owner: Any, replay: Boolean = true, handler: (T?) -> Unit) : Subscription<T> {
+    fun subscribe(owner: Any, replay: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
         val sub = Subscription(owner, this, handler)
         sub.trackSubscription()
         subscriptions = subscriptions + sub
@@ -50,6 +50,11 @@ open class Stream<T>() : Disposable {
         }
         return sub
     }
+
+    fun subscribe(owner: Any, handler: (T) -> Unit) : Subscription<T> {
+        return subscribe(owner, false, handler)
+    }
+
 
     fun unsubscribe(owner: Any) {
         subscriptions = subscriptions.filter {
