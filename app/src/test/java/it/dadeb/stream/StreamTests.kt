@@ -177,8 +177,4 @@ class StreamTests {
         b.dispose()
     }
 
-    @Test
-    fun noSubscriptionsShouldBeInMemory() {
-        AllocationTracker.report(true)
-    }
 }
