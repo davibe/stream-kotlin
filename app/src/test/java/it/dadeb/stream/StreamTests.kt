@@ -92,6 +92,17 @@ class StreamTests {
     }
 
     @Test
+    fun testMap() {
+        val stream = Stream<Int?>()
+        stream.trigger(null)
+        var result = emptyList<String>()
+        stream.map { "${it}" }.subscribe(replay = true) { result += it }
+        stream.trigger(1).trigger(2)
+        Assert.assertEquals(listOf("null", "1", "2"), result)
+        stream.dispose()
+    }
+
+    @Test
     fun testDistinct() {
         val stream = Stream<String>()
         var result = emptyList<String>()
@@ -121,6 +132,28 @@ class StreamTests {
     }
 
     @Test
+    fun testFold() {
+        val stream1 = Stream<String?>()
+        var result = Pair<String?, String?>("", null)
+        val sub = stream1
+            .trigger(null)
+            .fold(Pair<String?, String?>(null, null)) { (_, old), new ->  Pair(old, new) }
+            .subscribe(replay = true) { pair -> result = pair }
+
+        Assert.assertEquals(Pair(null, null), result)
+        stream1.trigger("1")
+        Assert.assertEquals(Pair(null, "1"), result)
+        stream1.trigger("2")
+        Assert.assertEquals(Pair("1", "2"), result)
+        stream1.trigger("3")
+        Assert.assertEquals(Pair("2", "3"), result)
+        stream1.trigger(null)
+        Assert.assertEquals(Pair("3", null), result)
+        stream1.dispose()
+        sub.dispose()
+    }
+
+    @Test
     fun testCombine2() {
         val a = Stream<String>()
         val b = Stream<String?>()
@@ -142,28 +175,6 @@ class StreamTests {
             result
         )
         b.dispose()
-    }
-
-    @Test
-    fun testFold() {
-        val stream1 = Stream<String?>()
-        var result = Pair<String?, String?>("", null)
-        val sub = stream1
-            .trigger(null)
-            .fold(Pair<String?, String?>(null, null)) { (_, old), new ->  Pair(old, new) }
-            .subscribe(replay = true) { pair -> result = pair }
-
-        Assert.assertEquals(Pair(null, null), result)
-        stream1.trigger("1")
-        Assert.assertEquals(Pair(null, "1"), result)
-        stream1.trigger("2")
-        Assert.assertEquals(Pair("1", "2"), result)
-        stream1.trigger("3")
-        Assert.assertEquals(Pair("2", "3"), result)
-        stream1.trigger(null)
-        Assert.assertEquals(Pair("3", null), result)
-        stream1.dispose()
-        sub.dispose()
     }
 
     @Test

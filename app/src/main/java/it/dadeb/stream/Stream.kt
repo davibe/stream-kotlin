@@ -76,20 +76,27 @@ open class Stream<T>() : Disposable {
 
     fun <U> map(function: (T) -> U): Stream<U> {
         val stream = Stream<U>()
-        if (this.valuePresent) { stream.value = function(this.value as T) }
-        stream.valuePresent = this.valuePresent
-        stream.disposables += this.subscribe {
+        this.disposables += stream
+        if (this.valuePresent) {
+            stream.trigger(function(this.value as T))
+        }
+
+        this.subscribe {
             stream.trigger(function(it))
         }
-        this.disposables += stream
         return stream
     }
 
-    fun distinct(): Stream<T> {
+    fun distinct() : Stream<T> {
+        return distinct { it }
+    }
+
+    fun <U> distinct(f: (T) -> U): Stream<T> {
         val stream = Stream<T>()
-        stream.value = this.value
-        stream.valuePresent = this.valuePresent
         this.disposables += stream
+        if (valuePresent) {
+            stream.trigger(this.value as T)
+        }
 
         var sub: Subscription<T>? = null
         sub = this.subscribe(replay = true) { initial ->
@@ -97,7 +104,7 @@ open class Stream<T>() : Disposable {
             var initialValue = initial
             stream.trigger(initial)
             this.subscribe { value ->
-                if (value != initialValue) {
+                if (f(value) != f(initialValue)) {
                     stream.trigger(value)
                     initialValue = value
                 }
