@@ -154,6 +154,62 @@ class StreamTests {
     }
 
     @Test
+    fun testFilter() {
+        val stream = Stream<String>()
+        var result = emptyList<String>()
+        stream.trigger("2").trigger("2")
+        stream.filter { it == "2" }.subscribe(replay = false) { result += it }
+        stream
+            .trigger("1")
+            .trigger("2").trigger("2")
+            .trigger("3").trigger("3").trigger("3")
+        Assert.assertEquals(listOf("2", "2"), result)
+        stream.dispose()
+    }
+
+    @Test
+    fun testTake() {
+        val stream = Stream<String>()
+        var result = emptyList<String>()
+        stream.trigger("2").trigger("2")
+        stream.take(3).subscribe(replay = false) { result += it }
+        stream
+            .trigger("1")
+            .trigger("2").trigger("2")
+            .trigger("3").trigger("3").trigger("3")
+        Assert.assertEquals(listOf("1", "2", "2"), result)
+        stream.dispose()
+    }
+
+    @Test
+    fun testTake2() {
+        val stream = Stream<String>()
+        var result = emptyList<String>()
+        stream.trigger("2").trigger("2")
+        stream.take(3).subscribe(replay = true) { result += it }
+        stream
+            .trigger("1")
+            .trigger("2").trigger("2")
+            .trigger("3").trigger("3").trigger("3")
+        Assert.assertEquals(listOf("2", "1", "2", "2"), result)
+        stream.dispose()
+    }
+
+    @Test
+    fun testTakeMany() {
+        val stream = Stream<String>()
+        var result = emptyList<String>()
+        stream.trigger("2").trigger("2")
+        stream.take(300).subscribe(replay = true) { result += it }
+        stream
+            .trigger("1")
+            .trigger("2").trigger("2")
+            .trigger("3").trigger("3").trigger("3")
+        Assert.assertEquals(listOf("2", "1", "2", "2", "3", "3", "3"), result)
+        stream.dispose()
+    }
+
+    @Test
     fun testCombine2() {
         val a = Stream<String>()
         val b = Stream<String?>()

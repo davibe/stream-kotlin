@@ -128,6 +128,40 @@ open class Stream<T>() : Disposable {
         }
     }
 
+    fun filter(f: (T) -> Boolean): Stream<T> {
+        val stream = Stream<T>()
+        this.disposables += stream
+        if (valuePresent) { stream.trigger(this.value as T) }
+
+        var sub: Subscription<T>? = null
+        sub = this.subscribe(replay = true) { v ->
+            if (f(v)) { stream.trigger(v) }
+        }
+        stream.disposables += sub
+
+        return stream
+    }
+
+    fun take(amount: Int): Stream<T> {
+        val stream = Stream<T>()
+        this.disposables += stream
+        if (valuePresent) { stream.trigger(this.value as T) }
+
+        var count = 0
+        var sub: Subscription<T>? = null
+        sub = this.subscribe(replay = true) { v ->
+            if (count <= amount) {
+                stream.trigger(v)
+                count += 1
+            } else {
+                sub?.dispose()
+            }
+        }
+        stream.disposables += sub
+
+        return stream
+    }
+
     override fun dispose() {
         (subscriptions + disposables).forEach { it.dispose() }
         subscriptions = emptyList()
