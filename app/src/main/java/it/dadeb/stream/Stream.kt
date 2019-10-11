@@ -281,10 +281,12 @@ object AllocationTracker {
     }
 
 
-    fun report(assert: Boolean = false) {
+    fun report(assert: Boolean = false) : Int {
         var atleastone = false
+        var count = 0
         for ((key, value) in map) {
             if (value != 0) {
+                count += 1
                 print(key)
                 atleastone = true
             }
@@ -295,6 +297,7 @@ object AllocationTracker {
                 error("leaking stream handlers")
             }
         }
+        return count
     }
 }
 

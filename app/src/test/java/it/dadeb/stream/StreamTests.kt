@@ -10,10 +10,7 @@ class StreamTests {
     @After
     fun testCheckAllocations() {
         System.gc()
-        Thread.sleep(100)
-        System.gc()
-        Thread.sleep(100)
-
+        Thread.sleep(10)
         AllocationTracker.report(true)
     }
 
@@ -125,6 +122,9 @@ class StreamTests {
             sub.dispose()
         }
         scope()
+        System.gc()
+        Thread.sleep(10)
+        assert(AllocationTracker.report() == 1) { "only root stream should be leaking" }
         stream = null
         System.gc()
         Thread.sleep(10)
