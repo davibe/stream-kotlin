@@ -238,7 +238,7 @@ object AllocationTracker {
 
     inline fun generate() : String {
         val stackTrack = Thread.currentThread().stackTrace
-        val value = (1 until Math.min(stackTrack.size, 10)).map {
+        val value = (2 until Math.min(stackTrack.size, 10)).map {
             val item = stackTrack[it]
             val fullClassName = item.className
             val className = fullClassName.substring(fullClassName.lastIndexOf(".") + 1)
@@ -292,7 +292,7 @@ object AllocationTracker {
             }
         }
         if (atleastone) {
-            print("leaking stream handlers")
+            println("leaking stream handlers")
             if (assert) {
                 map.clear()
                 error("leaking stream handlers")
