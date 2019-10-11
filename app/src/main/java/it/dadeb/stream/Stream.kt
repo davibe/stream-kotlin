@@ -295,6 +295,7 @@ object AllocationTracker {
             print("leaking stream handlers")
             if (assert) {
                 error("leaking stream handlers")
+                map.clear()
             }
         }
         return count
