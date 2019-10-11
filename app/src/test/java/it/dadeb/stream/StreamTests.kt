@@ -10,7 +10,10 @@ class StreamTests {
     @After
     fun testCheckAllocations() {
         System.gc()
-        Thread.sleep(10)
+        Thread.sleep(100)
+        System.gc()
+        Thread.sleep(100)
+
         AllocationTracker.report(true)
     }
 
@@ -107,20 +110,22 @@ class StreamTests {
 
     @Test
     fun testMapMemoryLeak() {
-        val stream = Stream<Int?>()
+        var stream: Stream<Int?>?
+        stream = Stream<Int?>()
         stream.trigger(null)
         var result = emptyList<String>()
         val scope: () -> Unit = { // used to ensure sub goes out of scope
-            val sub = stream
+            val sub = stream!!
                 .map { "${it}" }
                 .map { "${it}" }
                 .map { "${it}" }
                 .map { "${it}" }
                 .subscribe(replay = true) { result += it }
-            stream.trigger(1).trigger(2)
+            stream!!.trigger(1).trigger(2)
             sub.dispose()
         }
         scope()
+        stream = null
         System.gc()
         Thread.sleep(10)
         AllocationTracker.report(true)

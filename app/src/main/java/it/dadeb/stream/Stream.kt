@@ -3,9 +3,6 @@ package it.dadeb.stream
 import java.lang.ref.WeakReference
 
 
-val DEBUG = BuildConfig.DEBUG
-
-
 interface Disposable {
     fun dispose()
 }
@@ -29,15 +26,18 @@ open class Stream<T>() : Disposable {
     var valuePresent: Boolean = false
         private set
 
-    protected fun finalize() {
-        dispose()
+    var debugKey: String? = null
+
+    init {
+        AllocationTracker.plus(this)
     }
 
     // sub apis
 
     fun subscribe(replay: Boolean = false, strong: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
-        val sub = Subscription<T>(this, this, strong, handler)
-        sub.trackSubscription()
+        val sub = Subscription(this, this, strong, handler)
+        if (sub.strong) { Subscription.registry += sub }
+        AllocationTracker.plus(sub)
         subscriptions = subscriptions + Weak(sub)
 
         if (replay && valuePresent) {
@@ -47,7 +47,8 @@ open class Stream<T>() : Disposable {
     }
 
     fun unsubscribe(sub: Subscription<T>) {
-        sub.trackUnsubscription()
+        AllocationTracker.minus(sub)
+        if (sub.strong) { Subscription.registry -= sub }
         subscriptions = subscriptions.filter { it.get() !== sub }
     }
 
@@ -55,7 +56,8 @@ open class Stream<T>() : Disposable {
 
     fun subscribe(owner: Any, replay: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
         val sub = Subscription(owner, this, true, handler)
-        sub.trackSubscription()
+        if (sub.strong) { Subscription.registry += sub }
+        AllocationTracker.plus(sub)
         subscriptions = subscriptions + Weak(sub)
         if (replay && valuePresent) {
             handler.invoke(this.value as T)
@@ -63,15 +65,16 @@ open class Stream<T>() : Disposable {
         return sub
     }
 
-    fun subscribe(owner: Any, handler: (T) -> Unit) : Subscription<T> {
-        return subscribe(owner, false, handler)
-    }
+    fun subscribe(owner: Any, handler: (T) -> Unit) : Subscription<T> = subscribe(owner, false, handler)
 
     fun unsubscribe(owner: Any) {
         subscriptions = subscriptions.filter {
-            val it = it.get() ?: return@filter true
-            if (it.owner === owner) { it.trackUnsubscription() }
-            it.owner !== owner
+            val sub = it.get() ?: return@filter true
+            if (sub.owner === owner) {
+                AllocationTracker.minus(sub)
+                if (sub.strong) { Subscription.registry -= sub }
+            }
+            sub.owner !== owner
         }
     }
 
@@ -176,6 +179,7 @@ open class Stream<T>() : Disposable {
     }
 
     override fun dispose() {
+        AllocationTracker.minus(this)
         subscriptions.forEach { it.get()?.dispose() }
         disposables.forEach { it.dispose() }
         subscriptions = emptyList()
@@ -184,61 +188,41 @@ open class Stream<T>() : Disposable {
         value = null
     }
 
+    protected fun finalize() {
+        dispose()
+    }
+
 }
 
 
 class Subscription<T>(
     val owner: Any?,
     var stream: Stream<T>,
-    strong: Boolean,
+    val strong: Boolean,
     val handler: (T) -> Unit
 ) : Disposable {
 
-    companion object {
-        var registry = emptyList<Any>()
-    }
-
-    init {
-        if (strong) { registry += this }
-    }
-
-    var debugSubscriber: String? = null
+    var debugKey: String? = null
 
     override fun dispose() {
-        registry -= this
         stream.unsubscribe(this)
-    }
-
-    fun trackSubscription() {
-        if (!DEBUG) { return }
-        val stackTrack = Thread.currentThread().stackTrace
-        val value = (2 until Math.min(stackTrack.size, 10)).map {
-            val item = stackTrack[it]
-            val fullClassName = item.className
-            val className = fullClassName.substring(fullClassName.lastIndexOf(".") + 1)
-            val methodName = item.methodName
-            val lineNumber = item.lineNumber
-            val value = "$className.$methodName:$lineNumber"
-            value
-        }.joinToString(separator = "\n  ")
-        debugSubscriber = value
-        AllocationTracker.plus(value)
-    }
-
-    fun trackUnsubscription() {
-        debugSubscriber?.let {
-            AllocationTracker.minus(it)
-            debugSubscriber = null
-        }
     }
 
     protected fun finalize() {
         dispose()
     }
+
+    companion object {
+        var registry = emptyList<Any>()
+    }
+
 }
 
 
+
 object AllocationTracker {
+
+    val DEBUG = BuildConfig.DEBUG
 
     var map = mutableMapOf<String, Int>()
 
@@ -248,13 +232,54 @@ object AllocationTracker {
     }
 
     fun minus(key: String) {
-        val value = map.get(key)
-        if (value == null) {
-            // not possible
-            return
-        }
+        val value = map.get(key) ?: return
         map.put(key, value - 1)
     }
+
+    inline fun generate() : String {
+        val stackTrack = Thread.currentThread().stackTrace
+        val value = (1 until Math.min(stackTrack.size, 10)).map {
+            val item = stackTrack[it]
+            val fullClassName = item.className
+            val className = fullClassName.substring(fullClassName.lastIndexOf(".") + 1)
+            val methodName = item.methodName
+            val lineNumber = item.lineNumber
+            val value = "$className.$methodName:$lineNumber"
+            value
+        }.joinToString(separator = "\n  ")
+        return value
+    }
+
+    fun plus(sub: Subscription<*>) {
+        if (!DEBUG) { return }
+        var key = "Subscription ${generate()}"
+        sub.debugKey = key
+        plus(key)
+    }
+
+    fun minus(sub: Subscription<*>) {
+        if (!DEBUG) { return }
+        sub.debugKey?.let {
+            minus(it)
+            sub.debugKey = null
+        }
+    }
+
+    fun plus(stream: Stream<*>) {
+        if (!DEBUG) { return }
+        var key = "Stream ${generate()}"
+        stream.debugKey = key
+        plus(key)
+    }
+
+    fun minus(stream: Stream<*>) {
+        if (!DEBUG) { return }
+        stream.debugKey?.let {
+            minus(it)
+            stream.debugKey = null
+        }
+    }
+
 
     fun report(assert: Boolean = false) {
         var atleastone = false
