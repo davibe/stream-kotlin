@@ -163,14 +163,13 @@ open class Stream<T>() : Disposable {
         if (valuePresent) { stream.trigger(this.value as T) }
 
         var count = 0
-        var sub: Subscription<T>? = null
         val streamWeak = Weak(stream)
-        sub = this.subscribe(replay = true, strong = false) { v ->
+        val sub = this.subscribe(replay = true, strong = false) { v ->
             if (count <= amount) {
                 streamWeak.get()?.trigger(v)
                 count += 1
             } else {
-                sub?.dispose()
+                streamWeak.get()?.dispose()
             }
         }
         stream.disposables += sub
