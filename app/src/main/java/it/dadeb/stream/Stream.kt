@@ -52,7 +52,7 @@ open class Stream<T>() : Disposable {
         subscriptions = subscriptions.filter { it.get() !== sub }
     }
 
-    // sub apis based on ownership
+    // sub apis based on ownership (deprecated)
 
     fun subscribe(owner: Any, replay: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
         val sub = Subscription(owner, this, true, handler)
