@@ -96,12 +96,9 @@ open class Stream<T>() : Disposable {
 
     fun <U> map(function: (T) -> U): Stream<U> {
         val stream = Stream<U>()
-        if (this.valuePresent) {
-            stream.trigger(function(this.value as T))
-        }
 
         val streamWeak = Weak(stream)
-        stream.disposables += this.subscribe(strong = false) {
+        stream.disposables += this.subscribe(replay = true, strong = false) {
             streamWeak.get()?.trigger(function(it))
         }
 
@@ -114,25 +111,15 @@ open class Stream<T>() : Disposable {
 
     fun <U> distinct(f: (T) -> U): Stream<T> {
         val stream = Stream<T>()
-        if (valuePresent) {
-            stream.trigger(this.value as T)
-        }
 
         val streamWeak = Weak(stream)
-        var sub: Subscription<T>? = null
-        sub = this.subscribe(replay = true, strong = false) { initial ->
-            sub?.dispose()
-            var initialValue = initial
-            val stream = streamWeak.get() ?: return@subscribe
-            stream.trigger(initial)
-            stream.disposables += this.subscribe(strong = false) { value ->
-                if (f(value) != f(initialValue)) {
-                    streamWeak.get()?.trigger(value)
-                    initialValue = value
-                }
+        var waitingFirstValue = !this.valuePresent
+        stream.disposables += this.subscribe(strong = false) { value ->
+            if (waitingFirstValue || f(value) != f(stream.value as T)) {
+                streamWeak.get()?.trigger(value)
+                waitingFirstValue = false
             }
         }
-        stream.disposables += sub
 
         return stream
     }
@@ -148,7 +135,6 @@ open class Stream<T>() : Disposable {
 
     fun filter(f: (T) -> Boolean): Stream<T> {
         val stream = Stream<T>()
-        if (valuePresent) { stream.trigger(this.value as T) }
 
         val streamWeak = Weak(stream)
         stream.disposables += this.subscribe(replay = true, strong = false) { v ->
@@ -160,7 +146,6 @@ open class Stream<T>() : Disposable {
 
     fun take(amount: Int): Stream<T> {
         val stream = Stream<T>()
-        if (valuePresent) { stream.trigger(this.value as T) }
 
         var count = 0
         val streamWeak = Weak(stream)
