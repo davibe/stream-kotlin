@@ -1,13 +1,11 @@
 package it.dadeb.stream
 
-
-val DEBUG = BuildConfig.DEBUG
+import java.lang.ref.WeakReference
 
 
 interface Disposable {
     fun dispose()
 }
-
 inline fun disposableFun(crossinline function: () -> Unit) : Disposable {
     return object : Disposable {
         override fun dispose() {
@@ -16,20 +14,32 @@ inline fun disposableFun(crossinline function: () -> Unit) : Disposable {
     }
 }
 
+public class Weak<T>(value: T) {
+    private var value: WeakReference<T> = WeakReference(value)
+    fun get(): T? = value.get()
+}
 
 open class Stream<T>() : Disposable {
-    private var subscriptions = emptyList<Subscription<T>>()
+    private var subscriptions = emptyList<Weak<Subscription<T>>>()
     internal var disposables = emptyList<Disposable>()
     private var value: T? = null
     var valuePresent: Boolean = false
         private set
 
+    var debugKey: String? = null
+
+    init {
+        AllocationTracker.plus(this)
+    }
+
     // sub apis
 
-    fun subscribe(replay: Boolean = false, handler: (T) -> Unit) : Subscription<T> {
-        val sub = Subscription<T>(this, this, handler)
-        sub.trackSubscription()
-        subscriptions = subscriptions + sub
+    fun subscribe(replay: Boolean = false, strong: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
+        val sub = Subscription(Weak(this as Any), this, strong, handler)
+        if (sub.strong) { Subscription.registry += sub }
+        AllocationTracker.plus(sub)
+        subscriptions = subscriptions + Weak(sub)
+
         if (replay && valuePresent) {
             handler.invoke(this.value as T)
         }
@@ -37,29 +47,38 @@ open class Stream<T>() : Disposable {
     }
 
     fun unsubscribe(sub: Subscription<T>) {
-        sub.trackUnsubscription()
-        subscriptions = subscriptions.filter { it !== sub }
+        AllocationTracker.minus(sub)
+        if (sub.strong) { Subscription.registry -= sub }
+        subscriptions = subscriptions.filter { it.get() !== sub }
     }
 
+    // sub apis based on ownership (deprecated)
+
+    @Deprecated(message = "we want to remove 'owner' concept soon")
     fun subscribe(owner: Any, replay: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
-        val sub = Subscription(owner, this, handler)
-        sub.trackSubscription()
-        subscriptions = subscriptions + sub
+        val sub = Subscription(Weak(owner), this, true, handler)
+        if (sub.strong) { Subscription.registry += sub }
+        AllocationTracker.plus(sub)
+        subscriptions = subscriptions + Weak(sub)
         if (replay && valuePresent) {
             handler.invoke(this.value as T)
         }
         return sub
     }
 
-    fun subscribe(owner: Any, handler: (T) -> Unit) : Subscription<T> {
-        return subscribe(owner, false, handler)
-    }
+    @Deprecated(message = "we want to remove 'owner' concept soon")
+    fun subscribe(owner: Any, handler: (T) -> Unit) : Subscription<T> = subscribe(owner, false, handler)
 
-
+    @Deprecated(message = "we want to remove 'owner' concept soon")
     fun unsubscribe(owner: Any) {
         subscriptions = subscriptions.filter {
-            if (it.owner === owner) { it.trackUnsubscription() }
-            it.owner !== owner
+            val sub = it.get() ?: return@filter true
+            if (sub.owner.get() ?: sub.owner === owner) {
+                AllocationTracker.minus(sub)
+                if (sub.strong) { Subscription.registry -= sub }
+                return@filter false
+            }
+            true
         }
     }
 
@@ -75,20 +94,18 @@ open class Stream<T>() : Disposable {
     fun trigger(value: T) : Stream<T> {
         this.value = value
         valuePresent = true
-        subscriptions.forEach { it.handler(value) }
+        subscriptions.forEach { it.get()?.handler?.invoke(value) }
         return this
     }
 
     fun <U> map(function: (T) -> U): Stream<U> {
         val stream = Stream<U>()
-        this.disposables += stream
-        if (this.valuePresent) {
-            stream.trigger(function(this.value as T))
+
+        val streamWeak = Weak(stream)
+        stream.disposables += this.subscribe(replay = true, strong = false) {
+            streamWeak.get()?.trigger(function(it))
         }
 
-        this.subscribe {
-            stream.trigger(function(it))
-        }
         return stream
     }
 
@@ -98,21 +115,13 @@ open class Stream<T>() : Disposable {
 
     fun <U> distinct(f: (T) -> U): Stream<T> {
         val stream = Stream<T>()
-        this.disposables += stream
-        if (valuePresent) {
-            stream.trigger(this.value as T)
-        }
 
-        var sub: Subscription<T>? = null
-        sub = this.subscribe(replay = true) { initial ->
-            sub?.dispose()
-            var initialValue = initial
-            stream.trigger(initial)
-            this.subscribe { value ->
-                if (f(value) != f(initialValue)) {
-                    stream.trigger(value)
-                    initialValue = value
-                }
+        val streamWeak = Weak(stream)
+        var waitingFirstValue = !this.valuePresent
+        stream.disposables += this.subscribe(strong = false) { value ->
+            if (waitingFirstValue || f(value) != f(stream.value as T)) {
+                streamWeak.get()?.trigger(value)
+                waitingFirstValue = false
             }
         }
 
@@ -130,31 +139,26 @@ open class Stream<T>() : Disposable {
 
     fun filter(f: (T) -> Boolean): Stream<T> {
         val stream = Stream<T>()
-        this.disposables += stream
-        if (valuePresent) { stream.trigger(this.value as T) }
 
-        var sub: Subscription<T>? = null
-        sub = this.subscribe(replay = true) { v ->
-            if (f(v)) { stream.trigger(v) }
+        val streamWeak = Weak(stream)
+        stream.disposables += this.subscribe(replay = true, strong = false) { v ->
+            if (f(v)) { streamWeak.get()?.trigger(v) }
         }
-        stream.disposables += sub
 
         return stream
     }
 
     fun take(amount: Int): Stream<T> {
         val stream = Stream<T>()
-        this.disposables += stream
-        if (valuePresent) { stream.trigger(this.value as T) }
 
         var count = 0
-        var sub: Subscription<T>? = null
-        sub = this.subscribe(replay = true) { v ->
+        val streamWeak = Weak(stream)
+        val sub = this.subscribe(replay = true, strong = false) { v ->
             if (count <= amount) {
-                stream.trigger(v)
+                streamWeak.get()?.trigger(v)
                 count += 1
             } else {
-                sub?.dispose()
+                streamWeak.get()?.dispose()
             }
         }
         stream.disposables += sub
@@ -163,30 +167,64 @@ open class Stream<T>() : Disposable {
     }
 
     override fun dispose() {
-        (subscriptions + disposables).forEach { it.dispose() }
+        AllocationTracker.minus(this)
+        subscriptions.forEach { it.get()?.dispose() }
+        disposables.forEach { it.dispose() }
         subscriptions = emptyList()
         disposables = emptyList()
         valuePresent = false
         value = null
     }
 
+    protected fun finalize() {
+        dispose()
+    }
+
 }
 
 
 class Subscription<T>(
-    val owner: Any?,
-    val stream: Stream<T>,
+    val owner: Weak<Any>,
+    var stream: Stream<T>,
+    val strong: Boolean,
     val handler: (T) -> Unit
 ) : Disposable {
 
-    var debugSubscriber: String? = null
+    var debugKey: String? = null
 
     override fun dispose() {
         stream.unsubscribe(this)
     }
 
-    fun trackSubscription() {
-        if (!DEBUG) { return }
+    protected fun finalize() {
+        dispose()
+    }
+
+    companion object {
+        var registry = emptyList<Any>()
+    }
+
+}
+
+
+
+object AllocationTracker {
+
+    val DEBUG = BuildConfig.DEBUG
+
+    var map = mutableMapOf<String, Int>()
+
+    fun plus(key: String) {
+        val value = map.get(key) ?: 0
+        map.put(key, value + 1)
+    }
+
+    fun minus(key: String) {
+        val value = map.get(key) ?: return
+        map.put(key, value - 1)
+    }
+
+    inline fun generate() : String {
         val stackTrack = Thread.currentThread().stackTrace
         val value = (2 until Math.min(stackTrack.size, 10)).map {
             val item = stackTrack[it]
@@ -197,51 +235,58 @@ class Subscription<T>(
             val value = "$className.$methodName:$lineNumber"
             value
         }.joinToString(separator = "\n  ")
-        debugSubscriber = value
-        AllocationTracker.plus(value)
+        return value
     }
 
-    fun trackUnsubscription() {
-        debugSubscriber?.let {
-            AllocationTracker.minus(it)
-            debugSubscriber = null
+    fun plus(sub: Subscription<*>) {
+        if (!DEBUG) { return }
+        var key = "Subscription ${generate()}"
+        sub.debugKey = key
+        plus(key)
+    }
+
+    fun minus(sub: Subscription<*>) {
+        if (!DEBUG) { return }
+        sub.debugKey?.let {
+            minus(it)
+            sub.debugKey = null
         }
     }
-}
 
-
-object AllocationTracker {
-
-    var map = mutableMapOf<String, Int>()
-
-    fun plus(key: String) {
-        val value = map.get(key) ?: 0
-        map.put(key, value + 1)
+    fun plus(stream: Stream<*>) {
+        if (!DEBUG) { return }
+        var key = "Stream ${generate()}"
+        stream.debugKey = key
+        plus(key)
     }
 
-    fun minus(key: String) {
-        val value = map.get(key)
-        if (value == null) {
-            // not possible
-            return
+    fun minus(stream: Stream<*>) {
+        if (!DEBUG) { return }
+        stream.debugKey?.let {
+            minus(it)
+            stream.debugKey = null
         }
-        map.put(key, value - 1)
     }
 
-    fun report(assert: Boolean = false) {
+
+    fun report(assert: Boolean = false) : Int {
         var atleastone = false
+        var count = 0
         for ((key, value) in map) {
             if (value != 0) {
+                count += 1
                 print(key)
                 atleastone = true
             }
         }
         if (atleastone) {
-            print("leaking stream handlers")
+            println("leaking stream handlers")
             if (assert) {
+                map.clear()
                 error("leaking stream handlers")
             }
         }
+        return count
     }
 }
 
@@ -253,21 +298,22 @@ data class Tuple6<A, B, C, D, E, F>(val a: A, val b: B, val c: C, val d: D, val 
 
 fun <A, B>combine(a: Stream<A>, b: Stream<B>) : Stream<Tuple2<A, B>> {
     val stream = Stream<Tuple2<A, B>>()
+    val streamWeak = Weak(stream)
     val trigger: () -> Unit = {
         a.last { va ->
             b.last { vb ->
-                stream.trigger(Tuple2(va, vb))
+                streamWeak.get()?.trigger(Tuple2(va, vb))
             }
         }
     }
-    a.subscribe { trigger() }
-    b.subscribe { trigger() }
-    // destroying
+    stream.disposables += a.subscribe(strong = false) { trigger() }
+    stream.disposables += b.subscribe(strong = false) { trigger() }
+    // destroying when all parents die
     var count = 2
     val dispose: () -> Unit = {
         count -= 1
         if (count == 0) {
-            stream.dispose()
+            streamWeak.get()?.dispose()
         }
     }
     a.disposables += disposableFun { dispose() }
@@ -277,25 +323,26 @@ fun <A, B>combine(a: Stream<A>, b: Stream<B>) : Stream<Tuple2<A, B>> {
 
 fun <A, B, C>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>) : Stream<Tuple3<A, B, C>> {
     val stream = Stream<Tuple3<A, B, C>>()
+    val streamWeak = Weak(stream)
     val trigger: () -> Unit = {
         a.last { va ->
             b.last { vb ->
                 c.last { vc ->
-                    stream.trigger(Tuple3(va, vb, vc))
+                    streamWeak.get()?.trigger(Tuple3(va, vb, vc))
                 }
             }
         }
 
     }
-    a.subscribe { trigger() }
-    b.subscribe { trigger() }
-    c.subscribe { trigger() }
+    stream.disposables += a.subscribe(strong = false) { trigger() }
+    stream.disposables += b.subscribe(strong = false) { trigger() }
+    stream.disposables += c.subscribe(strong = false) { trigger() }
     // destroying
     var count = 3
     val dispose: () -> Unit = {
         count -= 1
         if (count == 0) {
-            stream.dispose()
+            streamWeak.get()?.dispose()
         }
     }
     a.disposables += disposableFun { dispose() }
@@ -306,28 +353,29 @@ fun <A, B, C>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>) : Stream<Tuple3<A
 
 fun <A, B, C, D>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D>) : Stream<Tuple4<A, B, C, D>> {
     val stream = Stream<Tuple4<A, B, C, D>>()
+    val streamWeak = Weak(stream)
     val trigger: () -> Unit = {
         a.last { va ->
             b.last { vb ->
                 c.last { vc ->
                     d.last { vd ->
-                        stream.trigger(Tuple4(va, vb, vc, vd))
+                        streamWeak.get()?.trigger(Tuple4(va, vb, vc, vd))
                     }
                 }
             }
         }
 
     }
-    a.subscribe { trigger() }
-    b.subscribe { trigger() }
-    c.subscribe { trigger() }
-    d.subscribe { trigger() }
+    stream.disposables += a.subscribe(strong = false) { trigger() }
+    stream.disposables += b.subscribe(strong = false) { trigger() }
+    stream.disposables += c.subscribe(strong = false) { trigger() }
+    stream.disposables += d.subscribe(strong = false) { trigger() }
     // destroying
     var count = 4
     val dispose: () -> Unit = {
         count -= 1
         if (count == 0) {
-            stream.dispose()
+            streamWeak.get()?.dispose()
         }
     }
     a.disposables += disposableFun { dispose() }
@@ -339,13 +387,14 @@ fun <A, B, C, D>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D>) 
 
 fun <A, B, C, D, E>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D>, e: Stream<E>) : Stream<Tuple5<A, B, C, D, E>> {
     val stream = Stream<Tuple5<A, B, C, D, E>>()
+    val streamWeak = Weak(stream)
     val trigger: () -> Unit = {
         a.last { va ->
             b.last { vb ->
                 c.last { vc ->
                     d.last { vd ->
                         e.last { ve ->
-                            stream.trigger(Tuple5(va, vb, vc, vd, ve))
+                            streamWeak.get()?.trigger(Tuple5(va, vb, vc, vd, ve))
                         }
                     }
                 }
@@ -353,17 +402,17 @@ fun <A, B, C, D, E>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D
         }
 
     }
-    a.subscribe { trigger() }
-    b.subscribe { trigger() }
-    c.subscribe { trigger() }
-    d.subscribe { trigger() }
-    e.subscribe { trigger() }
+    stream.disposables += a.subscribe(strong = false) { trigger() }
+    stream.disposables += b.subscribe(strong = false) { trigger() }
+    stream.disposables += c.subscribe(strong = false) { trigger() }
+    stream.disposables += d.subscribe(strong = false) { trigger() }
+    stream.disposables += e.subscribe(strong = false) { trigger() }
     // destroying
     var count = 5
     val dispose: () -> Unit = {
         count -= 1
         if (count == 0) {
-            stream.dispose()
+            streamWeak.get()?.dispose()
         }
     }
     a.disposables += disposableFun { dispose() }
@@ -377,6 +426,7 @@ fun <A, B, C, D, E>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D
 
 fun <A, B, C, D, E, F>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Stream<D>, e: Stream<E>, f: Stream<F>) : Stream<Tuple6<A, B, C, D, E, F>> {
     val stream = Stream<Tuple6<A, B, C, D, E, F>>()
+    val streamWeak = Weak(stream)
     val trigger: () -> Unit = {
         a.last { va ->
             b.last { vb ->
@@ -384,27 +434,26 @@ fun <A, B, C, D, E, F>combine(a: Stream<A>, b: Stream<B>, c: Stream<C>, d: Strea
                     d.last { vd ->
                         e.last { ve ->
                             f.last { vf ->
-                                stream.trigger(Tuple6(va, vb, vc, vd, ve, vf))
+                                streamWeak.get()?.trigger(Tuple6(va, vb, vc, vd, ve, vf))
                             }
                         }
                     }
                 }
             }
         }
-
     }
-    a.subscribe { trigger() }
-    b.subscribe { trigger() }
-    c.subscribe { trigger() }
-    d.subscribe { trigger() }
-    e.subscribe { trigger() }
-    f.subscribe { trigger() }
+    stream.disposables += a.subscribe(strong = false) { trigger() }
+    stream.disposables += b.subscribe(strong = false) { trigger() }
+    stream.disposables += c.subscribe(strong = false) { trigger() }
+    stream.disposables += d.subscribe(strong = false) { trigger() }
+    stream.disposables += e.subscribe(strong = false) { trigger() }
+    stream.disposables += f.subscribe(strong = false) { trigger() }
     // destroying
     var count = 6
     val dispose: () -> Unit = {
         count -= 1
         if (count == 0) {
-            stream.dispose()
+            streamWeak.get()?.dispose()
         }
     }
     a.disposables += disposableFun { dispose() }

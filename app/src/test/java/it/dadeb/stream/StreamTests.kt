@@ -9,6 +9,8 @@ class StreamTests {
 
     @After
     fun testCheckAllocations() {
+        System.gc()
+        Thread.sleep(10)
         AllocationTracker.report(true)
     }
 
@@ -54,7 +56,7 @@ class StreamTests {
         stream.trigger("ciao")
         stream.unsubscribe(subscription)
         stream.trigger("mondo")
-        Assert.assertEquals(result, "ciao")
+        Assert.assertEquals("ciao", result)
         stream.dispose()
     }
 
@@ -91,35 +93,63 @@ class StreamTests {
         stream.last { Assert.assertEquals("1", it) }
     }
 
+
     @Test
     fun testMap() {
         val stream = Stream<Int?>()
         stream.trigger(null)
         var result = emptyList<String>()
-        stream.map { "${it}" }.subscribe(replay = true) { result += it }
+        val sub = stream.map { "${it}" }.subscribe(replay = true) { result += it }
         stream.trigger(1).trigger(2)
+        sub.dispose()
         Assert.assertEquals(listOf("null", "1", "2"), result)
-        stream.dispose()
     }
+
+    @Test
+    fun testMapMemoryLeak() {
+        var stream: Stream<Int?>?
+        stream = Stream<Int?>()
+        stream.trigger(null)
+        var result = emptyList<String>()
+        val scope: () -> Unit = { // used to ensure sub goes out of scope
+            val sub = stream!!
+                .map { "${it}" }
+                .map { "${it}" }
+                .map { "${it}" }
+                .map { "${it}" }
+                .subscribe(replay = true) { result += it }
+            stream!!.trigger(1).trigger(2)
+            sub.dispose()
+        }
+        scope()
+        System.gc()
+        Thread.sleep(10)
+        assert(AllocationTracker.report() == 1) { "only root stream should be leaking" }
+        stream = null
+        System.gc()
+        Thread.sleep(10)
+        AllocationTracker.report(true)
+    }
+
 
     @Test
     fun testDistinct() {
         val stream = Stream<String>()
         var result = emptyList<String>()
-        stream.distinct().subscribe(replay = true) { result += it }
+        val sub = stream.distinct().subscribe(replay = true) { result += it }
         stream
             .trigger("1")
             .trigger("2").trigger("2")
             .trigger("3").trigger("3").trigger("3")
         Assert.assertEquals(listOf("1", "2", "3"), result)
-        stream.dispose()
+        sub.dispose()
     }
 
     @Test
     fun testDistinctNull() {
         val stream = Stream<String?>()
         var result = emptyList<String?>()
-        stream.distinct().subscribe(replay = true) { result += it }
+        val sub = stream.distinct().subscribe(replay = true) { result += it }
         stream
             .trigger(null).trigger(null)
             .trigger("1")
@@ -128,7 +158,7 @@ class StreamTests {
             .trigger("3").trigger("3").trigger("3")
             .trigger(null).trigger(null)
         Assert.assertEquals(listOf(null, "1", "2", null, "3", null), result)
-        stream.dispose()
+        sub.dispose()
     }
 
     @Test
@@ -149,7 +179,6 @@ class StreamTests {
         Assert.assertEquals(Pair("2", "3"), result)
         stream1.trigger(null)
         Assert.assertEquals(Pair("3", null), result)
-        stream1.dispose()
         sub.dispose()
     }
 
@@ -158,13 +187,13 @@ class StreamTests {
         val stream = Stream<String>()
         var result = emptyList<String>()
         stream.trigger("2").trigger("2")
-        stream.filter { it == "2" }.subscribe(replay = false) { result += it }
+        val sub = stream.filter { it == "2" }.subscribe(replay = false) { result += it }
         stream
             .trigger("1")
             .trigger("2").trigger("2")
             .trigger("3").trigger("3").trigger("3")
         Assert.assertEquals(listOf("2", "2"), result)
-        stream.dispose()
+        sub.dispose()
     }
 
     @Test
@@ -172,13 +201,13 @@ class StreamTests {
         val stream = Stream<String>()
         var result = emptyList<String>()
         stream.trigger("2").trigger("2")
-        stream.take(3).subscribe(replay = false) { result += it }
+        val sub = stream.take(3).subscribe(replay = false) { result += it }
         stream
             .trigger("1")
             .trigger("2").trigger("2")
             .trigger("3").trigger("3").trigger("3")
         Assert.assertEquals(listOf("1", "2", "2"), result)
-        stream.dispose()
+        sub.dispose()
     }
 
     @Test
@@ -186,13 +215,13 @@ class StreamTests {
         val stream = Stream<String>()
         var result = emptyList<String>()
         stream.trigger("2").trigger("2")
-        stream.take(3).subscribe(replay = true) { result += it }
+        val sub = stream.take(3).subscribe(replay = true) { result += it }
         stream
             .trigger("1")
             .trigger("2").trigger("2")
             .trigger("3").trigger("3").trigger("3")
         Assert.assertEquals(listOf("2", "1", "2", "2"), result)
-        stream.dispose()
+        sub.dispose()
     }
 
     @Test
@@ -200,13 +229,13 @@ class StreamTests {
         val stream = Stream<String>()
         var result = emptyList<String>()
         stream.trigger("2").trigger("2")
-        stream.take(300).subscribe(replay = true) { result += it }
+        val sub = stream.take(300).subscribe(replay = true) { result += it }
         stream
             .trigger("1")
             .trigger("2").trigger("2")
             .trigger("3").trigger("3").trigger("3")
         Assert.assertEquals(listOf("2", "1", "2", "2", "3", "3", "3"), result)
-        stream.dispose()
+        sub.dispose()
     }
 
     @Test
@@ -214,7 +243,7 @@ class StreamTests {
         val a = Stream<String>()
         val b = Stream<String?>()
         var result = emptyList<Tuple2<String, String?>>()
-        combine(a, b).distinct().subscribe { result += it }
+        val sub = combine(a, b).distinct().subscribe { result += it }
         a.trigger("1")
         b.trigger(null)
         b.trigger("2")
@@ -230,7 +259,27 @@ class StreamTests {
             ),
             result
         )
-        b.dispose()
+        sub.dispose()
     }
 
+    @Test
+    fun testSubscriptionRetainsStream() {
+        val a = Weak(Stream<String>())
+        assert(a.get() != null)
+        System.gc()
+        Thread.sleep(10)
+        assert(a.get() == null) { "stream is leaking" }
+
+        val b = Weak(Stream<String>())
+        val sub = Weak(b.get()?.subscribe { it })
+        assert(b.get() != null)
+        System.gc()
+        Thread.sleep(10)
+        assert(b.get() != null) { "stream not retained" }
+
+        sub.get()?.dispose()
+        System.gc()
+        Thread.sleep(10)
+        assert(b.get() == null) { "stream is leaking" }
+    }
 }
