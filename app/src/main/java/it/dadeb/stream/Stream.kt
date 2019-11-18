@@ -14,7 +14,7 @@ inline fun disposableFun(crossinline function: () -> Unit) : Disposable {
     }
 }
 
-internal class Weak<T>(value: T) {
+public class Weak<T>(value: T) {
     private var value: WeakReference<T> = WeakReference(value)
     fun get(): T? = value.get()
 }
@@ -35,7 +35,7 @@ open class Stream<T>() : Disposable {
     // sub apis
 
     fun subscribe(replay: Boolean = false, strong: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
-        val sub = Subscription(this, this, strong, handler)
+        val sub = Subscription(Weak(this as Any), this, strong, handler)
         if (sub.strong) { Subscription.registry += sub }
         AllocationTracker.plus(sub)
         subscriptions = subscriptions + Weak(sub)
@@ -54,8 +54,9 @@ open class Stream<T>() : Disposable {
 
     // sub apis based on ownership (deprecated)
 
+    @Deprecated(message = "we want to remove 'owner' concept soon")
     fun subscribe(owner: Any, replay: Boolean = true, handler: (T) -> Unit) : Subscription<T> {
-        val sub = Subscription(owner, this, true, handler)
+        val sub = Subscription(Weak(owner), this, true, handler)
         if (sub.strong) { Subscription.registry += sub }
         AllocationTracker.plus(sub)
         subscriptions = subscriptions + Weak(sub)
@@ -65,16 +66,19 @@ open class Stream<T>() : Disposable {
         return sub
     }
 
+    @Deprecated(message = "we want to remove 'owner' concept soon")
     fun subscribe(owner: Any, handler: (T) -> Unit) : Subscription<T> = subscribe(owner, false, handler)
 
+    @Deprecated(message = "we want to remove 'owner' concept soon")
     fun unsubscribe(owner: Any) {
         subscriptions = subscriptions.filter {
             val sub = it.get() ?: return@filter true
-            if (sub.owner === owner) {
+            if (sub.owner.get() ?: sub.owner === owner) {
                 AllocationTracker.minus(sub)
                 if (sub.strong) { Subscription.registry -= sub }
+                return@filter false
             }
-            sub.owner !== owner
+            true
         }
     }
 
@@ -180,7 +184,7 @@ open class Stream<T>() : Disposable {
 
 
 class Subscription<T>(
-    val owner: Any?,
+    val owner: Weak<Any>,
     var stream: Stream<T>,
     val strong: Boolean,
     val handler: (T) -> Unit
