@@ -151,7 +151,7 @@ open class Stream<T>() : Disposable {
     fun take(amount: Int): Stream<T> {
         val stream = Stream<T>()
 
-        var count = 0
+        var count = if (this.valuePresent) 0 else 1
         val streamWeak = Weak(stream)
         val sub = this.subscribe(replay = true, strong = false) { v ->
             if (count <= amount) {

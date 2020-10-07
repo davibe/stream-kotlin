@@ -239,6 +239,33 @@ class StreamTests {
     }
 
     @Test
+    fun testTakeEmpty() {
+        val stream = Stream<String>()
+        var result = emptyList<String>()
+        val sub = stream.take(3).subscribe(replay = true) { result += it }
+        stream
+            .trigger("1")
+            .trigger("2").trigger("2")
+            .trigger("3").trigger("3").trigger("3")
+        Assert.assertEquals(listOf("1", "2", "2"), result)
+        sub.dispose()
+    }
+
+    @Test
+    fun testTakeNoReplay() {
+        val stream = Stream<String>()
+        var result = emptyList<String>()
+        stream.trigger("0")
+        val sub = stream.take(3).subscribe(replay = false) { result += it }
+        stream
+            .trigger("1")
+            .trigger("2").trigger("2")
+            .trigger("3").trigger("3").trigger("3")
+        Assert.assertEquals(listOf("1", "2", "2"), result)
+        sub.dispose()
+    }
+
+    @Test
     fun testCombine2() {
         val a = Stream<String>()
         val b = Stream<String?>()
